@@ -6,7 +6,14 @@
 
 import random
 import streamlit as st
-from logic_utils import DIFFICULTY_CONFIG, parse_guess, check_guess, update_score
+from logic_utils import (
+    DIFFICULTY_CONFIG,
+    parse_guess,
+    check_guess,
+    update_score,
+    history_summary,
+    guess_temperature,
+)
 
 
 def reset_game(difficulty: str) -> None:
@@ -18,11 +25,9 @@ def reset_game(difficulty: str) -> None:
     st.session_state.status = "playing"
     st.session_state.difficulty = difficulty
     st.session_state.last_hint = None
+    st.session_state.last_temperature = None
+    st.session_state.last_outcome = None
     st.session_state.game_count += 1
-
-
-def on_enter() -> None:
-    st.session_state.pending_submit = True
 
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -50,11 +55,25 @@ if "game_count" not in st.session_state:
 if "show_hint" not in st.session_state:
     st.session_state.show_hint = True
 
-if "last_hint" not in st.session_state:
-    st.session_state.last_hint = None
-
 if "difficulty" not in st.session_state or st.session_state.difficulty != difficulty:
     reset_game(difficulty)
+
+st.sidebar.divider()
+st.sidebar.subheader("Guess History")
+if st.session_state.history:
+    history_rows = history_summary(
+        st.session_state.history,
+        st.session_state.secret,
+        low,
+        high,
+    )
+    for row in history_rows:
+        st.sidebar.caption(
+            f"Attempt {row['attempt']}: {row['guess']} • {row['distance']} away"
+        )
+        st.sidebar.progress(row["closeness"])
+else:
+    st.sidebar.caption("Your previous guesses will appear here.")
 
 # ── UI ────────────────────────────────────────────────────────────────────────
 
@@ -64,6 +83,20 @@ st.info(
     f"Attempts left: {attempt_limit - st.session_state.attempts}"
 )
 
+summary_rows = history_summary(st.session_state.history, st.session_state.secret, low, high)
+if summary_rows:
+    st.subheader("Session Summary")
+    st.dataframe(
+        summary_rows,
+        hide_index=True,
+        use_container_width=True,
+    )
+    best_row = max(summary_rows, key=lambda row: row["closeness"])
+    st.caption(
+        f"Best guess: attempt {best_row['attempt']} with {best_row['closeness']}% closeness "
+        f"({best_row['temperature']})."
+    )
+
 with st.expander("Developer Debug Info"):
     st.write("Secret:", st.session_state.secret)
     st.write("Attempts:", st.session_state.attempts)
@@ -72,7 +105,16 @@ with st.expander("Developer Debug Info"):
     st.write("History:", st.session_state.history)
 
 if st.session_state.last_hint and st.session_state.show_hint:
-    st.warning(st.session_state.last_hint)
+    if st.session_state.last_outcome == "Win":
+        st.success(f"🎉 {st.session_state.last_hint}")
+    elif st.session_state.last_temperature == "Hot":
+        st.success(f"🔥 Hot! {st.session_state.last_hint}")
+    elif st.session_state.last_temperature == "Warm":
+        st.info(f"🌤️ Warm. {st.session_state.last_hint}")
+    elif st.session_state.last_temperature == "Cold":
+        st.warning(f"🧊 Cold. {st.session_state.last_hint}")
+    else:
+        st.error(f"🥶 Ice cold. {st.session_state.last_hint}")
 
 if st.session_state.status == "won":
     st.balloons()
@@ -91,26 +133,24 @@ if st.session_state.status == "lost":
 
 # ── Input & controls ─────────────────────────────────────────────────────────
 
-raw_guess = st.text_input(
-    "Enter your guess:",
-    key=f"guess_input_{difficulty}_{st.session_state.game_count}",
-    on_change=on_enter,
-)
+with st.form(
+    key=f"guess_form_{difficulty}_{st.session_state.game_count}",
+    clear_on_submit=False,
+):
+    raw_guess = st.text_input("Enter your guess:")
+    submit = st.form_submit_button("Submit Guess 🚀", use_container_width=True)
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 with col1:
-    submit = st.button("Submit Guess 🚀", use_container_width=True)
-with col2:
     new_game = st.button("New Game 🔁", use_container_width=True)
-with col3:
+with col2:
     st.checkbox("Show hint", key="show_hint")
 
 if new_game:
     reset_game(difficulty)
     st.rerun()
 
-if (submit or st.session_state.get("pending_submit")) and st.session_state.status == "playing":
-    st.session_state.pending_submit = False
+if submit and st.session_state.status == "playing":
     ok, guess_int, err = parse_guess(raw_guess)
 
     if not ok:
@@ -123,6 +163,13 @@ if (submit or st.session_state.get("pending_submit")) and st.session_state.statu
 
         outcome, message = check_guess(guess_int, st.session_state.secret)
         st.session_state.last_hint = message
+        st.session_state.last_outcome = outcome
+        st.session_state.last_temperature = guess_temperature(
+            guess_int,
+            st.session_state.secret,
+            low,
+            high,
+        )
         st.session_state.score = update_score(
             st.session_state.score, outcome, st.session_state.attempts
         )
@@ -133,8 +180,6 @@ if (submit or st.session_state.get("pending_submit")) and st.session_state.statu
             st.session_state.status = "lost"
 
         st.rerun()
-elif st.session_state.get("pending_submit"):
-    st.session_state.pending_submit = False
 
 st.divider()
 st.caption("Built by an AI that claims this code is production-ready.")

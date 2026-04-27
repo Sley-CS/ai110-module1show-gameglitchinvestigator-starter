@@ -5,16 +5,114 @@ DIFFICULTY_CONFIG = {
 }
 
 
+def guess_temperature(guess: int, secret: int, low: int, high: int) -> str:
+    """Classify how close a guess is to the secret number.
+
+    Returns:
+        One of ``"Hot"``, ``"Warm"``, ``"Cold"``, or ``"Ice"``.
+    """
+    closeness = closeness_percent(guess, secret, low, high)
+    if closeness >= 80:
+        return "Hot"
+    if closeness >= 55:
+        return "Warm"
+    if closeness >= 30:
+        return "Cold"
+    return "Ice"
+
+
+def guess_distance(guess: int, secret: int) -> int:
+    """Return the absolute difference between a guess and the secret number.
+
+    Args:
+        guess: The player's guessed number.
+        secret: The hidden target number.
+
+    Returns:
+        The non-negative distance between the two values.
+    """
+    return abs(guess - secret)
+
+
+def closeness_percent(guess: int, secret: int, low: int, high: int) -> int:
+    """Convert a guess's distance from the secret into a 0-100 score.
+
+    A higher value means the guess is closer to the secret. The result is
+    clamped to the inclusive range 0 to 100 so it can be rendered safely in
+    UI progress indicators.
+
+    Args:
+        guess: The player's guessed number.
+        secret: The hidden target number.
+        low: The minimum valid value for the selected difficulty.
+        high: The maximum valid value for the selected difficulty.
+
+    Returns:
+        An integer percentage representing closeness to the secret.
+    """
+    span = max(1, high - low)
+    distance = guess_distance(guess, secret)
+    return max(0, min(100, round(100 - (distance / span) * 100)))
+
+
+def history_summary(
+    history: list[int], secret: int, low: int, high: int
+) -> list[dict[str, int | str]]:
+    """Build sidebar-ready rows describing each prior guess.
+
+    Each row includes the attempt number, the guess itself, the distance to the
+    secret, and a closeness score suitable for a progress bar.
+
+    Args:
+        history: Ordered list of guesses from the current game session.
+        secret: The hidden target number.
+        low: The minimum valid value for the selected difficulty.
+        high: The maximum valid value for the selected difficulty.
+
+    Returns:
+        A list of dictionaries ready for display in the sidebar.
+    """
+    rows = []
+    for attempt, guess in enumerate(history, start=1):
+        rows.append(
+            {
+                "attempt": attempt,
+                "guess": guess,
+                "distance": guess_distance(guess, secret),
+                "closeness": closeness_percent(guess, secret, low, high),
+                "temperature": guess_temperature(guess, secret, low, high),
+            }
+        )
+    return rows
+
+
 def get_range_for_difficulty(difficulty: str) -> tuple[int, int]:
-    """Return (low, high) inclusive range for a given difficulty."""
+    """Return the inclusive number range associated with a difficulty level.
+
+    Args:
+        difficulty: The selected difficulty name.
+
+    Returns:
+        A tuple containing the inclusive lower and upper bounds.
+    """
     return DIFFICULTY_CONFIG[difficulty]["range"]
 
 
-def parse_guess(raw: str): # 
-    """
-    Parse user input into an int guess.
+def parse_guess(raw: str) -> tuple[bool, int | float | None, str | None]:
+    """Parse raw user input into a numeric guess or an error.
 
-    Returns: (ok: bool, guess_int: int | None, error_message: str | None)
+    The parser accepts strings that can be interpreted as numbers, including
+    decimal and scientific notation. Whole-number inputs are normalized to
+    ``int`` values, while non-integral values are returned as ``float`` values
+    so the caller can decide how to handle them.
+
+    Args:
+        raw: The unprocessed user input from the text field.
+
+    Returns:
+        A tuple of ``(ok, guess_value, error_message)`` where ``ok`` is ``True``
+        when parsing succeeds, ``guess_value`` contains the parsed number, and
+        ``error_message`` is ``None`` unless parsing failed.
     """
     if raw is None:
         return False, None, "Enter a guess."
@@ -45,10 +143,15 @@ def parse_guess(raw: str): #
 
 
 def check_guess(guess: int, secret: int) -> tuple[str, str]:
-    """
-    Compare guess to secret and return (outcome, message).
+    """Compare a guess to the secret number and return game feedback.
 
-    outcome examples: "Win", "Too High", "Too Low"
+    Args:
+        guess: The player's guessed number.
+        secret: The hidden target number.
+
+    Returns:
+        A tuple of ``(outcome, message)`` where ``outcome`` is one of
+        ``"Win"``, ``"Too High"``, or ``"Too Low"``.
     """
     if guess == secret:
         return "Win", "🎉 Correct!"
@@ -59,7 +162,19 @@ def check_guess(guess: int, secret: int) -> tuple[str, str]:
 
 
 def update_score(current_score: int, outcome: str, attempt_number: int) -> int:
-    """Update score based on outcome and attempt number."""
+    """Update the running score after a guess outcome.
+
+    Wins award more points when they happen earlier in the game. Non-winning
+    guesses deduct a small fixed amount, and the score never drops below zero.
+
+    Args:
+        current_score: The score before the current guess is processed.
+        outcome: The result returned by :func:`check_guess`.
+        attempt_number: The 1-based attempt count for the current guess.
+
+    Returns:
+        The updated score.
+    """
     if outcome == "Win":
         return current_score + max(10, 100 - 10 * attempt_number)
     if outcome in ("Too High", "Too Low"):

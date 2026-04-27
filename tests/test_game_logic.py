@@ -2,7 +2,16 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from logic_utils import check_guess, update_score, parse_guess, get_range_for_difficulty
+from logic_utils import (
+    check_guess,
+    update_score,
+    parse_guess,
+    get_range_for_difficulty,
+    guess_distance,
+    closeness_percent,
+    history_summary,
+    guess_temperature,
+)
 
 
 # ── check_guess ───────────────────────────────────────────────────────────────
@@ -116,6 +125,30 @@ def test_comma_is_invalid():
     ok, _, _ = parse_guess("1,000")
     assert ok is False
 
+def test_decimal_input_is_handled_gracefully():
+    ok, value, err = parse_guess("3.14")
+    assert ok is True
+    assert err is None
+    assert value == 3.14
+
+def test_negative_input_is_handled_gracefully():
+    ok, value, err = parse_guess("-5")
+    assert ok is True
+    assert err is None
+    assert value == -5
+
+def test_very_large_integer_is_handled_gracefully():
+    ok, value, err = parse_guess("9007199254740993")
+    assert ok is True
+    assert err is None
+    assert isinstance(value, int)
+
+def test_extremely_large_scientific_notation_is_rejected():
+    ok, value, err = parse_guess("1e10000")
+    assert ok is False
+    assert value is None
+    assert err is not None
+
 
 # ── get_range_for_difficulty ──────────────────────────────────────────────────
 
@@ -130,6 +163,49 @@ def test_normal_range():
 def test_hard_range():
     low, high = get_range_for_difficulty("Hard")
     assert low == 1 and high == 100
+
+def test_out_of_range_negative_guess_is_rejected_by_game_rules():
+    low, high = get_range_for_difficulty("Easy")
+    guess = -5
+    assert not (low <= guess <= high)
+
+def test_out_of_range_huge_guess_is_rejected_by_game_rules():
+    low, high = get_range_for_difficulty("Hard")
+    guess = 10**30
+    assert not (low <= guess <= high)
+
+
+# ── guess history helpers ────────────────────────────────────────────────────
+
+def test_guess_distance_is_absolute_difference():
+    assert guess_distance(40, 50) == 10
+    assert guess_distance(60, 50) == 10
+
+
+def test_closeness_percent_hits_100_for_correct_guess():
+    assert closeness_percent(50, 50, 1, 100) == 100
+
+
+def test_closeness_percent_decreases_as_guess_moves_away():
+    close = closeness_percent(49, 50, 1, 100)
+    far = closeness_percent(25, 50, 1, 100)
+    assert close > far
+
+
+def test_history_summary_builds_sidebar_rows():
+    rows = history_summary([40, 60, 50], 50, 1, 100)
+    assert rows[0]["attempt"] == 1
+    assert rows[0]["guess"] == 40
+    assert rows[0]["distance"] == 10
+    assert rows[2]["closeness"] == 100
+    assert rows[2]["temperature"] == "Hot"
+
+
+def test_guess_temperature_labels_closeness_levels():
+    assert guess_temperature(50, 50, 1, 100) == "Hot"
+    assert guess_temperature(48, 50, 1, 100) in {"Hot", "Warm"}
+    assert guess_temperature(40, 100, 1, 100) == "Cold"
+    assert guess_temperature(1, 100, 1, 100) == "Ice"
 
 
 # ── full game simulation ──────────────────────────────────────────────────────
